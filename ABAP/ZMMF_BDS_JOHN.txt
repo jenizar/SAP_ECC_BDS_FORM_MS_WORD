@@ -378,3 +378,145 @@ CALL FUNCTION 'ZAB_FORMAT_DATE'
 IF sy-subrc <> 0.
 * Implement suitable error handling here
 ENDIF.
+
+  PERFORM change_first_upper USING date_text.
+  PERFORM change_first_upper USING year_text.
+
+ls_data-ponumber = lv_ebeln.
+ls_data-hari = day_name.
+ls_data-tanggal = date_text.
+ls_data-bulan = month_name.
+ls_data-tahun = year_text.
+
+str_tgl = sy-datum+6(2).
+str_bln = sy-datum+4(2).
+str_thn = sy-datum(4).
+concatenate str_tgl str_bln str_thn into ls_data-tgl separated by '/'.
+
+ls_data-plantdesc = lv_name1.
+ls_data-vendordesc = lv_name2.
+concatenate lv_street lv_str_suppl1 lv_str_suppl2 lv_str_suppl3 lv_location into ls_data-vendoraddress separated by space.
+
+str_tgl = lv_bedat+6(2).
+str_bln = lv_bedat+4(2).
+str_thn = lv_bedat(4).
+concatenate str_tgl str_bln str_thn into lv_podate separated by '/'.
+
+ls_data-podocdate = lv_podate.
+ls_data-totamount = lv_totnetwr.
+ls_data-totppn = lv_totppn.
+ls_data-total = lv_total.
+
+lv_totnetwr = lv_total / 100.
+
+  CALL FUNCTION 'SPELL_AMOUNT'
+    EXPORTING
+      amount    = lv_totnetwr
+      language  = 'E'
+    IMPORTING
+      in_words  = t_spell
+    EXCEPTIONS
+      not_found = 1
+      too_large = 2
+      OTHERS    = 3.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+  READ TABLE t_spell INDEX 1.
+  ls_data-terbilang = t_spell-word.
+      PERFORM change_first_upper USING ls_data-terbilang.
+APPEND ls_data to ft_data.
+
+go_document = fc_document.
+
+ENDFORM.
+
+FORM f_dyn_analyse_table TABLES   ft_data
+                                  ft_rfcf STRUCTURE rfc_fields
+                         USING    fu_tabname
+                         CHANGING fc_return TYPE i.
+
+  DATA: offset    LIKE rfc_fields-offset VALUE 0,
+        slen      TYPE i,
+        n         TYPE i,
+        pos       TYPE i VALUE 1,
+        alignment TYPE i.
+
+  fc_return = 0.
+
+  slen = strlen( fu_tabname ).
+  REFRESH ft_rfcf.
+  IF slen NE 0.
+    CALL FUNCTION 'RFC_GET_STRUCTURE_DEFINITION'
+      EXPORTING
+        tabname          = fu_tabname
+      TABLES
+        fields           = ft_rfcf
+      EXCEPTIONS
+        table_not_active = 1
+        OTHERS           = 2.
+    IF sy-subrc NE 0.
+      fc_return = 1.
+    ENDIF.
+
+  ELSE.
+*  unicode system, note 652435
+    PERFORM dyn_analyse_single IN PROGRAM saplcndp
+                TABLES
+                   ft_rfcf
+                USING
+                   ft_data
+                CHANGING
+                   pos
+                   n
+                   offset
+                   alignment.
+  ENDIF.
+
+ENDFORM.                    " F_DYN_ANALYSE_TABLE
+
+FORM f_set_display.
+
+  DESCRIBE TABLE lt_tword LINES d_int.
+  DO 7 TIMES.
+    ls_info-colindex = sy-index.
+    APPEND ls_info TO lt_info.
+  ENDDO.
+
+  FREE: go_handle.
+  fc_document->get_mail_merge_interface( IMPORTING mm_interface = go_handle ).
+
+  fc_document->get_mail_merge_interface( IMPORTING mm_interface = go_handle ).
+  fc_document->get_wordprocessor_interface( IMPORTING wp_interface = lo_word ).
+  lo_word->insert_table(
+      data_table      = lt_tword    " Value Table: Contains Data to be Transferred
+      info_table      = lt_info " Info Table: Specifies the Columns to be Transferred
+      lowerbound      = 1       " First Line of Internal Table to be Transferred
+      upperbound      = d_int       " Last Line of Intenral Table to be Transferred
+      doctable_number = 1       " Number of the Document Table to be Filled
+      clearoption     = 2       " Overwrite Behavior (for Document Table Contents)
+      startrow        = 2       " Line in the Document Table from Which Data is to be Inserted
+      varsize         = 'X'     " Adjust Size of Document Table to Fit?
+  ).
+
+  go_handle->set_data_source(
+    CHANGING
+      data_table = ft_data
+      fields_table = gt_rfcf ).
+
+  go_handle->merge_range(
+      first = 1
+      last  = lines( ft_data ) ).
+
+  go_handle->view( ).
+*  fc_document->close_document( ).
+
+ENDFORM.                    " F_SET_DISPLAY
+
+FORM change_first_upper USING input.
+  CALL FUNCTION 'ISP_CONVERT_FIRSTCHARS_TOUPPER'
+    EXPORTING
+      input_string  = input
+    IMPORTING
+      output_string = input.
+ENDFORM.
