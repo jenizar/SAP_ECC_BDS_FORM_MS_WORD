@@ -1,0 +1,380 @@
+*&---------------------------------------------------------------------*
+*& Report  ZMMF_BDS_JOHN
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+
+REPORT ZMMF_BDS_JOHN.
+
+TYPE-POOLS: soi, sbdst, vrm.
+
+TABLES: sscrfields, NAST.
+
+TYPES: BEGIN OF ty_ekko,
+         ebeln type ekko-ebeln,
+         bukrs type ekko-bukrs,
+         lifnr type ekko-lifnr,
+         bedat type ekko-bedat,
+       END OF ty_ekko.
+
+TYPES: BEGIN OF ty_ekpo,
+         ebeln type ekpo-ebeln,
+         ebelp type ekpo-ebelp,
+         txz01 type ekpo-txz01,
+         matnr type ekpo-matnr,
+         menge type ekpo-menge,
+         meins type ekpo-meins,
+         netwr type ekpo-netwr,
+       END OF ty_ekpo.
+data: lt_ekpo type standard table of ty_ekpo.
+data: ls_ekpo type ty_ekpo.
+
+data: lv_ebeln type ekko-ebeln,
+      lv_lifnr type ekko-lifnr,
+      lv_bedat type ekko-bedat,
+      lv_werks type ekpo-werks,
+      lv_adrnr type lfa1-adrnr,
+      lv_street type adrc-street,
+      lv_str_suppl1 type adrc-str_suppl1,
+      lv_str_suppl2 type adrc-str_suppl2,
+      lv_str_suppl3 type adrc-str_suppl3,
+      lv_location type adrc-location,
+      lv_name1 type t001w-name1,
+      lv_name2 type lfa1-name1,
+      int_menge type i,
+      lv_totppn type ekpo-netwr,
+      lv_totnetwr type ekpo-netwr,
+      lv_total type ekpo-netwr.    " Total Amount + PPN 10%
+
+" PO Doc Date
+data: str_tgl(2) type C,
+      str_bln(2) type C,
+      str_thn(4) type C,
+      lv_podate(10) type C.
+
+data : lt_text type table of tline,
+       ls_text type tline.
+
+TYPES:  BEGIN OF ty_data,
+          ponumber      type ekko-ebeln,    " PO_NUMBER
+          hari          type langt,         " SPELL_DAYS_PRINT_DATE
+          tanggal       type spell-word,    " SPELL_DATE_PRINT_DATE
+          bulan         type fcltx,         " SPELL_MONTH_PRINT_DATE
+          tahun         type spell-word,    " SPELL_YEAR_PRINT_DATE
+          tgl           type char10,        " PRINT_DATE
+          plantdesc     type t001w-name1,   " PLANT_DESC
+          vendordesc    type lfa1-name1,    " VENDOR_DESC
+          vendoraddress type char255,       " VENDOR_ADDRESS
+          podocdate     type C length 10,   " PO_DOC_DATE
+          totamount     type char35,        " TOTAL_AMOUNT
+          totppn        type char35,        " PPN 10%
+          total         type char35,        " TOTAL (TOTAL_AMOUNT + PPN 10%)
+          terbilang     type spell-word,    " TERBILANG
+        END OF ty_data.
+
+  data: date_short type string,
+        date_long type c length 20,
+        month_name type fcltx,
+        day_name type langt,
+        date_text type spell-word,
+        year_text type spell-word.
+
+  DATA: lo_control      TYPE REF TO i_oi_container_control,
+        lo_bds_instance TYPE REF TO cl_bds_document_set.
+
+  DATA: lt_signature  TYPE sbdst_signature,
+        lt_components TYPE sbdst_components,
+        lt_uris       TYPE sbdst_uri.
+
+  DATA: ls_signature TYPE bapisignat,
+        ls_uris      TYPE bapiuri.
+
+  DATA: lt_namecol TYPE soi_namecol_table.
+  DATA: ls_namecol TYPE soi_namecol_item,
+        ls_rfcf    TYPE rfc_fields.
+  DATA: lv_tabname TYPE x030l-tabname,
+        lv_ret     TYPE i.
+
+  FREE: lt_namecol.
+*  FREE: fc_document, fc_url, fc_has, lo_control, lo_bds_instance.
+
+  CONSTANTS: c_classname  TYPE sbdst_classname   VALUE 'ZFORM_BDS',
+           c_classtype  TYPE sbdst_classtype   VALUE 'OT',
+           c_object_key TYPE sbdst_object_key  VALUE 'ZMM_FORM',
+           c_docname    TYPE bds_propva        VALUE 'INVENTARISASI',
+           c_word       TYPE c LENGTH 40       VALUE 'Word.Document',
+           c_excel      TYPE c LENGTH 40       VALUE 'Excel.Sheet',
+           c_lang_id    TYPE sy-langu          VALUE 'id',
+           c_newline    TYPE abap_char1        VALUE cl_abap_char_utilities=>cr_lf.
+*           c_mindate    TYPE dats              VALUE '18000101',
+*           c_maxdate    TYPE dats              VALUE '99991231'.
+
+  DATA: lo_word TYPE REF TO i_oi_word_processor_document.
+  DATA: fc_url(256) TYPE C."bapiuri.
+  DATA: fc_document TYPE REF TO i_oi_document_proxy.
+  DATA: fu_object_type(40) TYPE c VALUE 'Word.Document'.
+  DATA: fu_merge type C VALUE 'X'.
+  DATA: fc_has type I.
+  DATA: ft_rfcf TYPE STANDARD TABLE OF rfc_fields.
+DATA: ft_data TYPE STANDARD TABLE OF ty_data,
+      ls_data type ty_data,
+      gt_rfcf TYPE STANDARD TABLE OF rfc_fields.
+
+DATA: go_handle   TYPE REF TO i_oi_mail_merge,
+      go_document TYPE REF TO i_oi_document_proxy.
+
+DATA: xscreen TYPE c,
+      retco LIKE sy-subrc.
+
+DATA: p_dest LIKE tsp03-padest,
+      p_disp LIKE ssfctrlop-preview.
+
+TYPES: BEGIN OF ty_tword,   " Table Layout
+         no(5),             " Nomor
+         kodebarang(10),    " Kode Barang
+         namabarang(40),    " Nama Barang
+         jumlah(10),        " Jumlah
+         satuan(3),         " Satuan
+         harga(20),         " Harga
+         total(20),         " Total
+       END OF ty_tword.
+
+data: ls_tword type ty_tword,
+      lt_tword type standard table of ty_tword.
+
+  DATA: lt_info TYPE soi_cols_table.
+  DATA: ls_info TYPE soi_cols.
+data: d_int TYPE i.
+data: t_spell TYPE TABLE OF spell WITH HEADER LINE.
+
+DEFINE m_namecol.
+  ls_namecol-name = &1.
+  ls_namecol-column = &2.
+  APPEND ls_namecol TO lt_namecol.
+END-OF-DEFINITION.
+
+*----------------------------------------------------------------------*
+*Input Screen/Selection
+*----------------------------------------------------------------------*
+
+SELECTION-SCREEN BEGIN OF BLOCK b01 WITH FRAME.
+PARAMETERS : p_01 TYPE mseg-mblnr OBLIGATORY.
+SELECTION-SCREEN END OF BLOCK b01.
+
+*======================================================================*
+*MAIN PROGRAM
+*Execute after Input Screen
+*======================================================================*
+
+START-OF-SELECTION.
+  PERFORM f_get_data.
+  PERFORM f_create_basic_objects.
+  PERFORM f_set_fields_table.
+  PERFORM f_set_display.
+END-OF-SELECTION.
+
+*** If this program attach to SAP tcode standard, use this.
+FORM entry_zwe3 USING ent_retco ent_screen.
+  xscreen = ent_screen.
+  CLEAR ent_retco.
+  p_01         = nast-objky(10).
+*  d_formname   = 'ZMM_GR_BPB'."tnapr-sform.
+  p_disp       = ent_screen.
+*  p_dest       = 'LP01'.
+  PERFORM f_get_data.
+  PERFORM f_create_basic_objects.
+  PERFORM f_set_fields_table.
+  PERFORM f_set_display.
+  ent_retco = retco.
+ENDFORM. " end entry we01
+*** If this program attach to SAP tcode standard, use this.
+
+FORM f_create_basic_objects.
+  c_oi_container_control_creator=>get_container_control( IMPORTING control = lo_control ).
+  lo_control->init_control(
+    r3_application_name      = 'App Name'
+    inplace_enabled          = space
+    inplace_scroll_documents = 'X'
+    parent                   = cl_gui_container=>default_screen
+    register_on_close_event  = 'X'
+    register_on_custom_event = 'X'
+    no_flush                 = 'X' ).
+
+  ls_signature-prop_name = 'DESCRIPTION'.
+  ls_signature-prop_value = 'INVENTARISASI'. "fu_prop_value.
+  APPEND ls_signature TO lt_signature.
+
+  CREATE OBJECT lo_bds_instance.
+  lo_bds_instance->get_info(
+    EXPORTING
+      classname       = c_classname
+      classtype       = c_classtype
+      object_key      = c_object_key
+    CHANGING
+      components      = lt_components
+      signature       = lt_signature
+    EXCEPTIONS
+      nothing_found   = 1
+      error_kpro      = 2
+      internal_error  = 3
+      parameter_error = 4
+      not_authorized  = 5
+      not_allowed     = 6 ).
+
+  IF sy-subrc NE 0 AND sy-subrc NE 1.
+    MESSAGE 'Error in the Business Document Service (BDS)' TYPE 'E'. "MESSAGE e003.
+  ENDIF.
+  IF sy-subrc = 1.
+    MESSAGE 'There are no documents that meet the search criteria' TYPE 'E'. "MESSAGE e004.
+  ENDIF.
+
+  lo_bds_instance->get_with_url(
+    EXPORTING
+      classname       = c_classname
+      classtype       = c_classtype
+      object_key      = c_object_key
+    CHANGING
+      uris            = lt_uris
+      signature       = lt_signature
+    EXCEPTIONS
+      nothing_found   = 1
+      error_kpro      = 2
+      internal_error  = 3
+      parameter_error = 4
+      not_authorized  = 5
+      not_allowed     = 6 ).
+
+  IF sy-subrc NE 0 AND sy-subrc NE 1.
+        MESSAGE 'Error in the Business Document Service (BDS)' TYPE 'E'. "MESSAGE e003. "MESSAGE e003.
+  ENDIF.
+  IF sy-subrc = 1.
+        MESSAGE 'There are no documents that meet the search criteria' TYPE 'E'. "MESSAGE e004. "MESSAGE e004.
+  ENDIF.
+
+  FREE lo_bds_instance.
+  READ TABLE lt_uris INTO ls_uris INDEX 1.
+  fc_url = ls_uris-uri.
+
+  lo_control->get_document_proxy(
+    EXPORTING
+      document_type      = fu_object_type "'Word.Document'
+      register_container = 'X'
+    IMPORTING
+      document_proxy     = fc_document ).
+
+  fc_document->open_document(
+    open_inplace = space
+    document_url = fc_url ).
+
+  IF fu_object_type EQ 'Word.Document' AND fu_merge EQ 'X'.
+    fc_document->has_mail_merge_interface( IMPORTING is_available = fc_has ).
+  ENDIF.
+ENDFORM.
+
+FORM f_set_fields_table.
+  FREE: lt_namecol.
+  PERFORM f_dyn_analyse_table
+              TABLES
+                 ft_data
+                 ft_rfcf
+              USING
+                 lv_tabname
+              CHANGING
+                 lv_ret.
+
+  m_namecol:  'PONUMBER' '1',
+              'HARI' '2',
+              'TANGGAL' '3',
+              'BULAN' '4',
+              'TAHUN' '5',
+              'TGL' '6',
+              'PLANTDESC' '7',
+              'VENDORDESC' '8',
+              'VENDORADDRESS' '9',
+              'PODOCDATE' '10',
+              'TOTAMOUNT' '11',
+              'TOTPPN' '12',
+              'TOTAL' '13',
+              'TERBILANG' '14'.
+
+gt_rfcf[] = ft_rfcf[].
+  LOOP AT lt_namecol INTO ls_namecol.
+    READ TABLE ft_rfcf INTO ls_rfcf INDEX ls_namecol-column.
+    IF sy-subrc EQ 0.
+      ls_rfcf-fieldname = ls_namecol-name.
+      MODIFY gt_rfcf INDEX ls_namecol-column FROM ls_rfcf.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+FORM f_get_data.
+
+  select single ebeln lifnr bedat into (lv_ebeln, lv_lifnr, lv_bedat) from ekko where ebeln eq p_01.
+
+  select ebeln ebelp txz01 matnr menge meins netwr into table lt_ekpo from ekpo where ebeln eq lv_ebeln.
+
+  select single adrnr into lv_adrnr from lfa1 where lifnr eq lv_lifnr.
+
+  select single street str_suppl1 str_suppl2 str_suppl3 location into (lv_street, lv_str_suppl1, lv_str_suppl2, lv_str_suppl3, lv_location)
+      from adrc where addrnumber eq lv_adrnr.
+
+  select single name1 into lv_name1 from t001w where werks eq lv_werks.
+
+  select single name1 into lv_name2 from lfa1 where lifnr eq lv_lifnr.
+
+  clear lv_totnetwr.
+  loop at lt_ekpo into ls_ekpo.
+     ls_tword-no = ls_ekpo-ebelp.
+     ls_tword-kodebarang = ls_ekpo-matnr.
+     ls_tword-namabarang = ls_ekpo-txz01.
+     int_menge = ls_ekpo-menge.
+     ls_tword-jumlah = int_menge.
+
+    CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+      EXPORTING
+        input                = ls_ekpo-meins
+       LANGUAGE             = 'E'
+     IMPORTING
+*       LONG_TEXT            =
+       OUTPUT               = ls_ekpo-meins.
+*       SHORT_TEXT           =
+*     EXCEPTIONS
+*       UNIT_NOT_FOUND       = 1
+*       OTHERS               = 2
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+
+     ls_tword-satuan = ls_ekpo-meins.
+     ls_tword-harga = ls_ekpo-netwr.
+     lv_total = int_menge * ls_ekpo-netwr.
+     ls_tword-total = lv_total.
+     lv_totnetwr = lv_totnetwr + ls_ekpo-netwr.
+     append ls_tword to lt_tword.
+  endloop.
+
+  lv_totppn = ( lv_totnetwr * 10 ) / 100.
+
+  lv_total = lv_totnetwr + lv_totppn.
+
+CALL FUNCTION 'ZAB_FORMAT_DATE'
+ EXPORTING
+   LANGUAGE                        = 'E'
+   DATE                            = SY-DATUM
+ IMPORTING
+*   DATE_SHORT                      = date_short
+   DATE_LONG                       = date_long
+   MONTH_NAME                      = month_name
+   DAY_NAME                        = day_name
+   DATE_TEXT                       = date_text
+   YEAR_TEXT                       = year_text
+ EXCEPTIONS
+   MONTH_NAME_NOT_MAINTAINED       = 1
+   OTHERS                          = 2
+          .
+IF sy-subrc <> 0.
+* Implement suitable error handling here
+ENDIF.

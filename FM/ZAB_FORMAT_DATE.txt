@@ -1,0 +1,78 @@
+FUNCTION ZAB_FORMAT_DATE.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(LANGUAGE) TYPE  SY-LANGU DEFAULT SY-LANGU
+*"     VALUE(DATE) TYPE  SY-DATUM DEFAULT SY-DATUM
+*"  EXPORTING
+*"     VALUE(DATE_SHORT)
+*"     VALUE(DATE_LONG)
+*"     VALUE(MONTH_NAME)
+*"     VALUE(DAY_NAME)
+*"     VALUE(DATE_TEXT)
+*"     VALUE(YEAR_TEXT)
+*"  EXCEPTIONS
+*"      MONTH_NAME_NOT_MAINTAINED
+*"----------------------------------------------------------------------
+
+  DATA: ls_t247  TYPE t247,
+        ls_t246  TYPE t246,
+        ls_spell TYPE spell.
+  DATA: lv_dayp TYPE p.
+
+  SELECT SINGLE * FROM t247 INTO ls_t247
+    WHERE spras EQ language
+      AND mnr EQ date+4(2).
+  IF sy-subrc IS NOT INITIAL.
+    RAISE month_name_not_maintained.
+  ENDIF.
+  CHECK ls_t247 IS NOT INITIAL.
+
+  CONCATENATE date+6(2) ls_t247-ktx date(4) INTO date_short SEPARATED BY space.
+  CONCATENATE date+6(2) ls_t247-ltx date(4) INTO date_long SEPARATED BY space.
+
+  MOVE ls_t247-ltx TO month_name.
+
+  lv_dayp = date MOD 7.
+  IF lv_dayp GT 1.
+    lv_dayp = lv_dayp - 1.
+  ELSE.
+    lv_dayp = lv_dayp + 6.
+  ENDIF.
+
+  SELECT SINGLE * FROM t246 INTO ls_t246
+    WHERE sprsl EQ language
+      AND wotnr EQ lv_dayp.
+
+  MOVE ls_t246-langt TO day_name.
+
+  CALL FUNCTION 'SPELL_AMOUNT'
+    EXPORTING
+      amount    = date+6(2)
+      language  = language
+    IMPORTING
+      in_words  = ls_spell
+    EXCEPTIONS
+      not_found = 1
+      too_large = 2
+      OTHERS    = 3.
+  IF sy-subrc EQ 0.
+    date_text = ls_spell-word.
+  ENDIF.
+
+  FREE: ls_spell.
+  CALL FUNCTION 'SPELL_AMOUNT'
+    EXPORTING
+      amount    = date(4)
+      language  = language
+    IMPORTING
+      in_words  = ls_spell
+    EXCEPTIONS
+      not_found = 1
+      too_large = 2
+      OTHERS    = 3.
+  IF sy-subrc EQ 0.
+    year_text = ls_spell-word.
+  ENDIF.
+
+ENDFUNCTION.
